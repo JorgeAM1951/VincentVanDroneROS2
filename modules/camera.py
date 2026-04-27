@@ -16,9 +16,11 @@ class Camera:
 
     def getP(self, scaleFactor=1):
         #Hallamos la matriz de parámetros K
-        K = scaleFactor * np.array([self.focalX/self.pixelSizeX, 0, self.imageCenter[0]], 
-                               [0, self.focalY/self.pixelSizeY, self.imageCenter[1]], 
-                               [0, 0, 1])
+        K = scaleFactor * np.array([
+                                [self.focalX/self.pixelSizeX, 0, self.imageCenter[0]], 
+                                [0, self.focalY/self.pixelSizeY, self.imageCenter[1]], 
+                                [0, 0, 1]
+                               ])
         #Hallamos la matriz de rotación (pitch, roll, yaw)
         rot = R.from_euler('x', self.orientation[1], degrees=True)
         RX = rot.as_matrix()
@@ -32,6 +34,6 @@ class Camera:
         TWC[:3,:3] = RWC
         TWC[3,:3] = self.pose
         TCW = np.linalg.inv(TWC)
-        canonical = np.hstack((np.eye(3),np.zeros(3)))
+        canonical = np.hstack((np.eye(3),np.zeros((3, 1))))
         P = K @ np.linalg.solve(TWC.T, canonical.T).T #Resuelve XT = C --> X = C*T^-1 --> X = C/T
         return P
