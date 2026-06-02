@@ -1,4 +1,5 @@
 # Load data
+import os
 import time
 import numpy as np
 import matplotlib.pyplot as plt
@@ -41,14 +42,15 @@ def main():
         resolution  = [1456, 1088],
     )
 
-    traj = Trajectory(np.array([[-1.5, 2, 1], [1.5, 2, 1], [1.5, 2, 2.5], [-1.5, 2, 2.5], [-1.5, 2, 1]]), period=2.0)
+    traj = Trajectory(np.array([[-1.04, 2.89, 0.65], [-1.04, 3.08, 2.74], [1.04, 3.08, 2.74], 
+                                [1.04, 2.89, 0.65], [-1.04, 2.89, 0.65]]), period=10.0)
 
     # AQUÍ TENGO QUE DIBUJAR LA TRAYECTORIA USANDO LOS WP
     # --- Build a square + diagonals as the desired drawing ---
     sq = np.array([
-        [-1.5,  2, 1], [ 1.5,  2, 1], [ 1.5,  2, 2.5], [-1.5,  2, 2.5], [-1.5,  2, 1],
-        [ 1.5,  2, 2.5], [-1.5, 2, 2.5], [ 1.5, 2, 1],    # diagonals
-        [-1.5, 2, 2.5],  # back to top-left
+        [-1.04,  2, 0.65], [ 1.04,  2, 0.65], [ 1.04,  2, 2.5], [-1.04,  2, 2.5], [-1.04,  2, 0.65],
+        [ 1.04,  2, 2.5], [-1.04, 2, 2.5], [ 1.04, 2, 0.65],    # diagonals
+        [-1.04, 2, 2.5],  # back to top-left
     ])
 
     # --- Waypoints at the square corners ---
@@ -75,6 +77,8 @@ def main():
         c_z = cz[8*seg : 8*seg+8]
 
         t_puntos = np.linspace(0, T, 50)
+        if seg < n_seg - 1:
+            t_puntos = t_puntos[:-1]
         
         for t in t_puntos:
             trayectoria_x.append(sum(c_x[i] * (t**i) for i in range(8)))
@@ -83,17 +87,61 @@ def main():
 
     trayectoria = np.column_stack((trayectoria_x, trayectoria_y, trayectoria_z))
     # --- Assemble scene ---
-    scene = Scene(bounds=[[-3, 3], [0, 6], [0, 5]])
-    scene.addCamera(cam, label='{camera}')
-    scene.addDesiredDrawing(sq)
-    scene.addTrajectory(trayectoria, label='Trajectory QP')
+    scene = Scene(bounds=[[-3, 3], [2.5, 4], [0.1, 4.8]])
+    
+    # Añadimos la cámara y los waypoints (los puntos rojos '+')
+    scene.addCamera(cam, label='Camera 0')
     scene.addWaypoints(wps)
+    
+    # --- MODIFICACIÓN AQUÍ ---
+    # En lugar de pasarle una variable antigua o un cuadrado hardcodeado, 
+    # le pasamos directamente 'wps' para que dibuje la línea verde sobre ellos.
+    scene.addDesiredDrawing(wps)
+    
+    # Añadimos la trayectoria calculada por tu solver (Naranja)
+    scene.addTrajectory(trayectoria, label='Minimum Snap')
+
+
+    # --- Render ---
+    ruta_matlab = "/home/jorge/Downloads/VINCENT_JORGEARMAS/VINCENT_JORGEARMAS/00_VINCENT_VAN_DRONE/99_export/00_testsv8_2026/20260528-140103/02_export" # <-- Rellena esto luego
+    
+    try:
+        t_mat = np.loadtxt(os.path.join(ruta_matlab, "tvec.txt"), delimiter=',')
+        q_mat = np.loadtxt(os.path.join(ruta_matlab, "q.txt"), delimiter=',')
+        qd_mat = np.loadtxt(os.path.join(ruta_matlab, "qd.txt"), delimiter=',')
+        qdd_mat = np.loadtxt(os.path.join(ruta_matlab, "qdd.txt"), delimiter=',')
+        qddd_mat = np.loadtxt(os.path.join(ruta_matlab, "qddd.txt"), delimiter=',')
+        qdddd_mat = np.loadtxt(os.path.join(ruta_matlab, "qdddd.txt"), delimiter=',')
+        
+        # Truco: Si MATLAB guardó las matrices al revés (3 filas x N columnas)
+        # transponemos para que sean (N, 3) como espera Python
+        if q_mat.shape[0] == 3 and q_mat.shape[1] > 3:
+            q_mat, qd_mat, qdd_mat = q_mat.T, qd_mat.T, qdd_mat.T
+            qddd_mat, qdddd_mat = qddd_mat.T, qdddd_mat.T
+            
+        datos_matlab = [q_mat, qd_mat, qdd_mat, qddd_mat, qdddd_mat]
+        
+        # Superponemos la trayectoria de MATLAB en la vista 3D
+        scene.addTrajectory(q_mat, label='MATLAB', color='cyan')
+        
+    except Exception as e:
+        print(f"No se pudieron cargar los txt de MATLAB: {e}")
+        datos_matlab = None
+        t_mat = None
 
     # --- Render ---
     fig3d, _  = scene.plot3D(title='3D World')
     figCam, _ = scene.plotCameraView(camera_idx=0, title='Camera Frame View')
-    figDer, _ = scene.plotDerivatives(trajectory_idx=0)
-
+    
+    # Pasamos explícitamente los tiempos de los waypoints: 0, 10, 20, 30, 40
+    # (4 segmentos × 10 s/segmento)
+    figDer, _ = scene.plotDerivatives(
+        trajectory_idx=0, 
+        times=None,
+        matlab_data=datos_matlab, 
+        matlab_times=t_mat,
+        waypoint_times=[0, 10, 20, 30, 40]
+    )
 
     plt.show()
 
