@@ -1,6 +1,6 @@
 import numpy as np
 import scipy.sparse as sparse
-import osqp
+import clarabel
 import math
 
 def get_poly_deriv_coeffs(tau, derivative_order):
@@ -13,6 +13,9 @@ def get_poly_deriv_coeffs(tau, derivative_order):
     return coeffs
 
 def remove_dependent_equalities(A_eq, b_eq, tol=1e-6):
+    if len(A_eq) == 0:
+        return np.array([]), np.array([])
+    
     A_indep = []
     b_indep = []
     Q = None 
@@ -73,25 +76,30 @@ def solve_minimum_snap_3d_projective(waypoints, period, camera_center=None, bbox
                 term_i = math.factorial(i) / math.factorial(i - 4)
                 term_j = math.factorial(j) / math.factorial(j - 4)
                 power = i + j - 7
-                P_1d[8 * seg + i, 8 * seg + j] = (term_i * term_j * (tau_end ** power)) / power
+                val = (term_i * term_j * (tau_end ** power)) / power
+                P_1d[8 * seg + i, 8 * seg + j] = val / (T ** 7)
 
     P_sparse = sparse.block_diag([P_1d, P_1d, P_1d], format='csc')
-    P_sparse += sparse.eye(n_vars_total) * 1e-9
+    P_sparse += sparse.eye(n_vars_total) * 1e-12
 
     Aeq_rows, beq_vals = [], []
-    Aineq_rows, lineq_vals, uineq_vals = [], [], []
+    Aineq_rows, bineq_vals = [], []
 
     def add_eq(coeffs_x, coeffs_y, coeffs_z, val):
         Aeq_rows.append(np.concatenate([coeffs_x, coeffs_y, coeffs_z]))
         beq_vals.append(val)
         
     def add_ineq(coeffs_x, coeffs_y, coeffs_z, low, up):
+        # Clarabel requiere Ax <= b (NonnegativeConeT). Transformamos el límite [low, up]:
+        # 1) Ax <= up
         Aineq_rows.append(np.concatenate([coeffs_x, coeffs_y, coeffs_z]))
-        lineq_vals.append(low)
-        uineq_vals.append(up)
+        bineq_vals.append(up)
+        # 2) Ax >= low  ->  -Ax <= -low
+        Aineq_rows.append(-np.concatenate([coeffs_x, coeffs_y, coeffs_z]))
+        bineq_vals.append(-low)
 
     # =========================================================
-    # 2. IGUALDADES (Evaluadas en tau_end = 1.0)
+    # 2. IGUALDADES (Evaluadas en tau_end = 1.0) - ORDEN EXACTO
     # =========================================================
     
     # [1] pos continuity
@@ -169,13 +177,12 @@ def solve_minimum_snap_3d_projective(waypoints, period, camera_center=None, bbox
             t_vec[ax*n_vars_1d + 8*(seg+1) : ax*n_vars_1d + 8*(seg+1)+8] = -c_right
             add_eq(t_vec[0:n_vars_1d], t_vec[n_vars_1d:2*n_vars_1d], t_vec[2*n_vars_1d:3*n_vars_1d], 0.0)
 
-    # => FILTRO PRESOLVE (Notarás que al estar la matriz mejor condicionada no suelta error)
+    # => FILTRO PRESOLVE
     Aeq_mat, beq_vec = remove_dependent_equalities(np.array(Aeq_rows), np.array(beq_vals))
 
     # =========================================================
     # 3. DESIGUALDADES (LÍMITES FÍSICOS ESCALADOS)
     # =========================================================
-    # Al derivar en [0,1], V_real = V_norm / T. Por tanto, límite V_norm = Límite_Real * T
     min_x, max_x = -1.1658, 1.1618
     min_y, max_y =  2.5000, 3.4172
     min_z, max_z =  0.4947, 2.8152
@@ -219,40 +226,46 @@ def solve_minimum_snap_3d_projective(waypoints, period, camera_center=None, bbox
             rz[8*seg:8*seg+8] = c_acc; add_ineq(np.zeros(n_vars_1d), np.zeros(n_vars_1d), rz, min_az, max_az)
 
     # =========================================================
-    # 4. RESOLVER
+    # 4. RESOLVER CON CLARABEL
     # =========================================================
-    A_final = np.vstack([Aeq_mat, np.array(Aineq_rows)])
-    l_final = np.concatenate([beq_vec, np.array(lineq_vals)])
-    u_final = np.concatenate([beq_vec, np.array(uineq_vals)])
+    
+    # Ensamblar las matrices finales en el orden que espera Clarabel
+    A_final = np.vstack([Aeq_mat, np.array(Aineq_rows)]) if len(Aineq_rows) > 0 else Aeq_mat
+    b_final = np.concatenate([beq_vec, np.array(bineq_vals)]) if len(bineq_vals) > 0 else beq_vec
 
     A_sparse = sparse.csc_matrix(A_final)
     q = np.zeros(n_vars_total)
 
-    prob = osqp.OSQP()
-    prob.setup(
-        P_sparse, q, A_sparse, l=l_final, u=u_final, 
-        verbose=True, 
-        eps_abs=1e-6,         # Mayor precisión
-        eps_rel=1e-6, 
-        max_iter=100000, 
-        adaptive_rho=True,    # Ayuda al solver a no estancarse
-        polish=True           # <--- LA CLAVE: Fuerza una solución exacta al final (como MATLAB)
-    )
-    res = prob.solve()
+    # Configurar los conos. El orden DEBE ser el mismo en el que apilamos A_final
+    cones = []
+    if len(beq_vec) > 0:
+        cones.append(clarabel.ZeroConeT(len(beq_vec)))
+    if len(bineq_vals) > 0:
+        cones.append(clarabel.NonnegativeConeT(len(bineq_vals)))
 
-    estatus_validos = ['solved', 'solved inaccurate', 'maximum iterations reached']
-    if res.info.status not in estatus_validos:
-        print(f"OSQP falló con estatus crítico: {res.info.status}")
-        return None, None, None
+    settings = clarabel.DefaultSettings()
+    settings.verbose = True
+    settings.tol_gap_abs = 1e-8
+    settings.tol_gap_rel = 1e-8
+    settings.tol_feas = 1e-8
+    
+    # Iniciar Solver
+    solver = clarabel.DefaultSolver(P_sparse, q, A_sparse, b_final, cones, settings)
+    res = solver.solve()
 
-    # Extraemos coeficientes "Normalizados"
+    if str(res.status) != "Solved":
+        print(f"Clarabel advierte un estatus diferente a 'Solved': {res.status}")
+        # En Clarabel, a veces da "AlmostSolved" que sigue siendo muy bueno
+        if str(res.status) not in ["Solved", "AlmostSolved"]:
+            return None, None, None
+
+    # Extraer solución
     sol = res.x
     cx = sol[0 : n_vars_1d]
     cy = sol[n_vars_1d : 2*n_vars_1d]
     cz = sol[2*n_vars_1d : 3*n_vars_1d]
     
-    # DESHACER TRUCO: Transformamos los coeficientes a tiempo real
-    # para que tu main.py no tenga que enterarse de nada y calcule bien.
+    # Deshacer la normalización temporal para devolver el tiempo a real (T=10.0)
     for seg in range(n_segments):
         for i in range(8):
             scale = T ** i

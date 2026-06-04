@@ -7,6 +7,7 @@ from modules.camera import Camera
 from modules.visualization import Scene
 from modules.trajectory import Trajectory
 from modules.solvers import quadprog as qp
+from modules.solvers import clarabel as cl
 
 
 def main():
@@ -65,7 +66,8 @@ def main():
 
     # --- Llamada al NUEVO solver proyectivo gigante ---
     # Le pasamos la pose de la cámara como punto focal
-    cx, cy, cz = qp.solve_minimum_snap_3d_projective(wps, T, camera_center)
+    #cx, cy, cz = qp.solve_minimum_snap_3d_projective(wps, T, camera_center)
+    cx, cy, cz = cl.solve_minimum_snap_3d_projective(wps, T, camera_center)
     
     # Extraer puntos para dibujar la trayectoria
     trayectoria_x, trayectoria_y, trayectoria_z = [], [], []
