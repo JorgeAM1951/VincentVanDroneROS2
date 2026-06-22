@@ -8,6 +8,7 @@ from modules.visualization import Scene
 from modules.trajectory import Trajectory
 from modules.solvers import quadprog as qp
 from modules.solvers import clarabel as cl
+from modules.export import export_trajectory_for_ros2
 
 
 def main():
@@ -43,15 +44,15 @@ def main():
         resolution  = [1456, 1088],
     )
 
-    traj = Trajectory(np.array([[-1.04, 2.89, 0.65], [-1.04, 3.08, 2.74], [1.04, 3.08, 2.74], 
-                                [1.04, 2.89, 0.65], [-1.04, 2.89, 0.65]]), period=10.0)
+    traj = Trajectory(np.array([[-1.049, 2.89, 0.652],[-2.0, 2.99, 1.698] ,[-1.049, 3.08, 2.744], [1.049, 3.08, 2.744], [2.0, 2.99, 1.698],  
+                                [1.049, 2.89, 0.652], [-1.049, 2.897, 0.652]]), period=10.0)
 
     # AQUÍ TENGO QUE DIBUJAR LA TRAYECTORIA USANDO LOS WP
     # --- Build a square + diagonals as the desired drawing ---
     sq = np.array([
-        [-1.04,  2, 0.65], [ 1.04,  2, 0.65], [ 1.04,  2, 2.5], [-1.04,  2, 2.5], [-1.04,  2, 0.65],
-        [ 1.04,  2, 2.5], [-1.04, 2, 2.5], [ 1.04, 2, 0.65],    # diagonals
-        [-1.04, 2, 2.5],  # back to top-left
+        [-1.0491,  2, 0.6522], [ 1.0491,  2, 0.6522], [ 1.0491,  2, 2.5], [-1.0491,  2, 2.5], [-1.0491,  2, 0.6522],
+        [ 1.0491,  2, 2.5], [-1.0491, 2, 2.5], [ 1.0491, 2, 0.6522],    # diagonals
+        [-1.0491, 2, 2.5],  # back to top-left
     ])
 
     # --- Waypoints at the square corners ---
@@ -66,8 +67,8 @@ def main():
 
     # --- Llamada al NUEVO solver proyectivo gigante ---
     # Le pasamos la pose de la cámara como punto focal
-    #cx, cy, cz = qp.solve_minimum_snap_3d_projective(wps, T, camera_center)
-    cx, cy, cz = cl.solve_minimum_snap_3d_projective(wps, T, camera_center)
+    cx, cy, cz = qp.solve_minimum_snap_3d_projective(wps, T, camera_center)
+    #cx, cy, cz = cl.solve_minimum_snap_3d_projective(wps, T, camera_center)
     
     # Extraer puntos para dibujar la trayectoria
     trayectoria_x, trayectoria_y, trayectoria_z = [], [], []
@@ -105,7 +106,10 @@ def main():
 
 
     # --- Render ---
-    ruta_matlab = "/home/jorge/Downloads/VINCENT_JORGEARMAS/VINCENT_JORGEARMAS/00_VINCENT_VAN_DRONE/99_export/00_testsv8_2026/20260528-140103/02_export" # <-- Rellena esto luego
+    #Datos del cuadrado
+    #ruta_matlab = "/home/jorge/Downloads/VINCENT_JORGEARMAS/VINCENT_JORGEARMAS/00_VINCENT_VAN_DRONE/99_export/00_testsv8_2026/20260528-140103/02_export" # <-- Rellena esto luego
+    #Datos del hexagono
+    ruta_matlab = "/home/jorge/Downloads/VINCENT_JORGEARMAS/VINCENT_JORGEARMAS/00_VINCENT_VAN_DRONE/99_export/00_testsv8_2026/20260611-000498/02_export"
     
     try:
         t_mat = np.loadtxt(os.path.join(ruta_matlab, "tvec.txt"), delimiter=',')
@@ -137,15 +141,33 @@ def main():
     
     # Pasamos explícitamente los tiempos de los waypoints: 0, 10, 20, 30, 40
     # (4 segmentos × 10 s/segmento)
+    total_time = 40.0
+    
+    # 2. Generamos los 7 puntos de tiempo (t=0, t=6.66, ..., t=40)
+    # Esto distribuye equitativamente los 40s entre los 6 segmentos de tu trayectoria
+    num_wps = wps.shape[0]
+    tiempos_wps = np.linspace(0, total_time, num_wps).tolist()
     figDer, _ = scene.plotDerivatives(
         trajectory_idx=0, 
         times=None,
         matlab_data=datos_matlab, 
         matlab_times=t_mat,
-        waypoint_times=[0, 10, 20, 30, 40]
+        waypoint_times=tiempos_wps
     )
 
     plt.show()
+
+    n_samples = q_mat.shape[0] # o q_mat.shape[1] si está transpuesta
+    t_vec_final = np.linspace(0, traj.period, n_samples)
+    
+    # Llamamos a la función
+    carpeta_guardado = export_trajectory_for_ros2(
+        q = q_mat, 
+        qd = qd_mat, 
+        qdd = qdd_mat, 
+        tvec = t_vec_final, 
+        base_path = "./trayectorias_exportadas"
+    )
 
 
 if __name__ == "__main__":

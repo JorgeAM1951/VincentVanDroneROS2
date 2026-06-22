@@ -176,7 +176,7 @@ def solve_minimum_snap_3d_projective(waypoints, period, camera_center=None, bbox
     # 3. DESIGUALDADES (LÍMITES FÍSICOS ESCALADOS)
     # =========================================================
     # Al derivar en [0,1], V_real = V_norm / T. Por tanto, límite V_norm = Límite_Real * T
-    min_x, max_x = -1.1658, 1.1618
+    min_x, max_x = -2.1658, 2.1618
     min_y, max_y =  2.5000, 3.4172
     min_z, max_z =  0.4947, 2.8152
 
@@ -228,6 +228,8 @@ def solve_minimum_snap_3d_projective(waypoints, period, camera_center=None, bbox
     A_sparse = sparse.csc_matrix(A_final)
     q = np.zeros(n_vars_total)
 
+    print("-------------------------------------------------")
+    print(A_sparse) #<---- Debug de pobres
     prob = osqp.OSQP()
     prob.setup(
         P_sparse, q, A_sparse, l=l_final, u=u_final, 

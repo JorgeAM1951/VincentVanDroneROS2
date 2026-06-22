@@ -1,9 +1,11 @@
 import numpy as np
 import scipy.sparse as sparse
+import scipy.io as sio
 import clarabel
 import math
 
 def get_poly_deriv_coeffs(tau, derivative_order):
+    # Forzar precisión extendida de 128 bits
     coeffs = np.zeros(8)
     for i in range(derivative_order, 8):
         val = 1
@@ -49,15 +51,19 @@ def solve_minimum_snap_3d_projective(waypoints, period, camera_center=None, bbox
     if camera_center is None:
         raise ValueError("Se necesita 'camera_center' para los planos epipolares.")
 
+    # Asegurar precisión matemática de entrada
+    waypoints = np.array(waypoints)
+    camera_center = np.array(camera_center)
+
     n_segments = len(waypoints) - 1
     n_vars_1d = 8 * n_segments
     n_vars_total = 3 * n_vars_1d
     
-    # TRUCO DE MATLAB: Normalizamos el tiempo del optimizador a [0, 1]
+    # Normalizamos el tiempo del optimizador a [0, 1]
     T = period
-    tau_end = 1.0  
+    tau_end = 1.0
     
-    # 0. Normales
+    # 0. Normales calculadas en float128
     normals = []
     for i in range(n_segments):
         ray1 = waypoints[i] - camera_center
@@ -68,7 +74,7 @@ def solve_minimum_snap_3d_projective(waypoints, period, camera_center=None, bbox
             normal = normal / norm_length
         normals.append(normal)
 
-    # 1. Matriz de Coste P (Evaluada siempre con tiempo = 1.0)
+    # 1. Matriz de Coste P en float128
     P_1d = np.zeros((n_vars_1d, n_vars_1d))
     for seg in range(n_segments):
         for i in range(4, 8):
@@ -80,6 +86,8 @@ def solve_minimum_snap_3d_projective(waypoints, period, camera_center=None, bbox
                 P_1d[8 * seg + i, 8 * seg + j] = val / (T ** 7)
 
     P_sparse = sparse.block_diag([P_1d, P_1d, P_1d], format='csc')
+    
+    # NOTA: Si persiste el "InsufficientProgress", puedes subir este 1e-12 a 1e-9 o 1e-6
     P_sparse += sparse.eye(n_vars_total) * 1e-12
 
     Aeq_rows, beq_vals = [], []
@@ -90,16 +98,15 @@ def solve_minimum_snap_3d_projective(waypoints, period, camera_center=None, bbox
         beq_vals.append(val)
         
     def add_ineq(coeffs_x, coeffs_y, coeffs_z, low, up):
-        # Clarabel requiere Ax <= b (NonnegativeConeT). Transformamos el límite [low, up]:
-        # 1) Ax <= up
+        # Ax <= up
         Aineq_rows.append(np.concatenate([coeffs_x, coeffs_y, coeffs_z]))
         bineq_vals.append(up)
-        # 2) Ax >= low  ->  -Ax <= -low
+        # -Ax <= -low
         Aineq_rows.append(-np.concatenate([coeffs_x, coeffs_y, coeffs_z]))
         bineq_vals.append(-low)
 
     # =========================================================
-    # 2. IGUALDADES (Evaluadas en tau_end = 1.0) - ORDEN EXACTO
+    # 2. IGUALDADES (float128)
     # =========================================================
     
     # [1] pos continuity
@@ -158,12 +165,14 @@ def solve_minimum_snap_3d_projective(waypoints, period, camera_center=None, bbox
         t_vec[ax*n_vars_1d + idx : ax*n_vars_1d + idx + 8] = cv_T
         add_eq(t_vec[0:n_vars_1d], t_vec[n_vars_1d:2*n_vars_1d], t_vec[2*n_vars_1d:3*n_vars_1d], 0.0)
 
-    # [4] normals 
+    # [4] normals
     for seg in range(n_segments):
         nx, ny, nz = normals[seg]
         d_plane = np.dot(normals[seg], camera_center)
         for p in range(8):
-            rx, ry, rz = np.zeros(n_vars_1d), np.zeros(n_vars_1d), np.zeros(n_vars_1d)
+            rx = np.zeros(n_vars_1d)
+            ry = np.zeros(n_vars_1d)
+            rz = np.zeros(n_vars_1d)
             rx[8*seg + p] = nx; ry[8*seg + p] = ny; rz[8*seg + p] = nz
             val = d_plane if p == 0 else 0.0
             add_eq(rx, ry, rz, val)
@@ -177,15 +186,31 @@ def solve_minimum_snap_3d_projective(waypoints, period, camera_center=None, bbox
             t_vec[ax*n_vars_1d + 8*(seg+1) : ax*n_vars_1d + 8*(seg+1)+8] = -c_right
             add_eq(t_vec[0:n_vars_1d], t_vec[n_vars_1d:2*n_vars_1d], t_vec[2*n_vars_1d:3*n_vars_1d], 0.0)
 
-    # => FILTRO PRESOLVE
-    Aeq_mat, beq_vec = remove_dependent_equalities(np.array(Aeq_rows), np.array(beq_vals))
+    # Conversión a arrays de numpy explícitos en float128
+    Aeq_raw = np.array(Aeq_rows)
+    beq_raw = np.array(beq_vals)
+    Aineq_raw = np.array(Aineq_rows) if len(Aineq_rows) > 0 else np.empty((0, n_vars_total))
+    bineq_raw = np.array(bineq_vals) if len(bineq_vals) > 0 else np.array([])
+    
+    # Cast preventivo a float64 solo para guardar el .mat (evita que crashée scipy.io)
+    sio.savemat('matrices_python_bruto.mat', {
+        'P_py': P_sparse.astype(np.float64), 
+        'q_py': np.zeros(n_vars_total, dtype=np.float64), 
+        'Aeq_py': Aeq_raw.astype(np.float64),
+        'beq_py': beq_raw.astype(np.float64),
+        'Aineq_py': Aineq_raw.astype(np.float64), 
+        'bineq_py': bineq_raw.astype(np.float64)
+    })
 
+    # => FILTRO PRESOLVE (Procesa internamente en float128)
+    Aeq_mat, beq_vec = remove_dependent_equalities(Aeq_raw, beq_raw)
+    
     # =========================================================
     # 3. DESIGUALDADES (LÍMITES FÍSICOS ESCALADOS)
     # =========================================================
-    min_x, max_x = -1.1658, 1.1618
-    min_y, max_y =  2.5000, 3.4172
-    min_z, max_z =  0.4947, 2.8152
+    min_x, max_x = -2.1658, 2.1618
+    min_y, max_y = 2.5000, 3.4172
+    min_z, max_z = 0.4947, 2.8152
 
     min_vx, max_vx = -0.4289 * T, 0.3987 * T
     min_vy, max_vy = -0.2036 * T, 0.1780 * T
@@ -195,48 +220,45 @@ def solve_minimum_snap_3d_projective(waypoints, period, camera_center=None, bbox
     min_ay, max_ay = -0.0843 * (T**2), 0.0888 * (T**2)
     min_az, max_az = -0.1291 * (T**2), 0.2716 * (T**2)
 
-    t_samples = np.linspace(0, tau_end, 10)
+    t_samples = np.linspace(0, tau_end, 10, )
     for seg in range(n_segments):
         for t_eval in t_samples:
             # POS
             c_pos = get_poly_deriv_coeffs(t_eval, 0)
-            rx, ry, rz = np.zeros(n_vars_1d), np.zeros(n_vars_1d), np.zeros(n_vars_1d)
-            rx[8*seg:8*seg+8] = c_pos; add_ineq(rx, np.zeros(n_vars_1d), np.zeros(n_vars_1d), min_x, max_x)
-            rx, ry, rz = np.zeros(n_vars_1d), np.zeros(n_vars_1d), np.zeros(n_vars_1d)
+            rx = np.zeros(n_vars_1d, )
+            rx[8*seg:8*seg+8] = c_pos; add_ineq(rx, np.zeros(n_vars_1d), np.zeros(n_vars_1d, ), min_x, max_x)
+            ry = np.zeros(n_vars_1d)
             ry[8*seg:8*seg+8] = c_pos; add_ineq(np.zeros(n_vars_1d), ry, np.zeros(n_vars_1d), min_y, max_y)
-            rx, ry, rz = np.zeros(n_vars_1d), np.zeros(n_vars_1d), np.zeros(n_vars_1d)
+            rz = np.zeros(n_vars_1d)
             rz[8*seg:8*seg+8] = c_pos; add_ineq(np.zeros(n_vars_1d), np.zeros(n_vars_1d), rz, min_z, max_z)
 
             # VEL
             c_vel = get_poly_deriv_coeffs(t_eval, 1)
-            rx, ry, rz = np.zeros(n_vars_1d), np.zeros(n_vars_1d), np.zeros(n_vars_1d)
+            rx = np.zeros(n_vars_1d)
             rx[8*seg:8*seg+8] = c_vel; add_ineq(rx, np.zeros(n_vars_1d), np.zeros(n_vars_1d), min_vx, max_vx)
-            rx, ry, rz = np.zeros(n_vars_1d), np.zeros(n_vars_1d), np.zeros(n_vars_1d)
+            ry = np.zeros(n_vars_1d)
             ry[8*seg:8*seg+8] = c_vel; add_ineq(np.zeros(n_vars_1d), ry, np.zeros(n_vars_1d), min_vy, max_vy)
-            rx, ry, rz = np.zeros(n_vars_1d), np.zeros(n_vars_1d), np.zeros(n_vars_1d)
+            rz = np.zeros(n_vars_1d)
             rz[8*seg:8*seg+8] = c_vel; add_ineq(np.zeros(n_vars_1d), np.zeros(n_vars_1d), rz, min_vz, max_vz)
 
             # ACC
             c_acc = get_poly_deriv_coeffs(t_eval, 2)
-            rx, ry, rz = np.zeros(n_vars_1d), np.zeros(n_vars_1d), np.zeros(n_vars_1d)
+            rx = np.zeros(n_vars_1d)
             rx[8*seg:8*seg+8] = c_acc; add_ineq(rx, np.zeros(n_vars_1d), np.zeros(n_vars_1d), min_ax, max_ax)
-            rx, ry, rz = np.zeros(n_vars_1d), np.zeros(n_vars_1d), np.zeros(n_vars_1d)
+            ry = np.zeros(n_vars_1d)
             ry[8*seg:8*seg+8] = c_acc; add_ineq(np.zeros(n_vars_1d), ry, np.zeros(n_vars_1d), min_ay, max_ay)
-            rx, ry, rz = np.zeros(n_vars_1d), np.zeros(n_vars_1d), np.zeros(n_vars_1d)
+            rz = np.zeros(n_vars_1d)
             rz[8*seg:8*seg+8] = c_acc; add_ineq(np.zeros(n_vars_1d), np.zeros(n_vars_1d), rz, min_az, max_az)
 
     # =========================================================
     # 4. RESOLVER CON CLARABEL
     # =========================================================
-    
-    # Ensamblar las matrices finales en el orden que espera Clarabel
     A_final = np.vstack([Aeq_mat, np.array(Aineq_rows)]) if len(Aineq_rows) > 0 else Aeq_mat
     b_final = np.concatenate([beq_vec, np.array(bineq_vals)]) if len(bineq_vals) > 0 else beq_vec
 
     A_sparse = sparse.csc_matrix(A_final)
     q = np.zeros(n_vars_total)
 
-    # Configurar los conos. El orden DEBE ser el mismo en el que apilamos A_final
     cones = []
     if len(beq_vec) > 0:
         cones.append(clarabel.ZeroConeT(len(beq_vec)))
@@ -248,24 +270,30 @@ def solve_minimum_snap_3d_projective(waypoints, period, camera_center=None, bbox
     settings.tol_gap_abs = 1e-8
     settings.tol_gap_rel = 1e-8
     settings.tol_feas = 1e-8
-    
-    # Iniciar Solver
-    solver = clarabel.DefaultSolver(P_sparse, q, A_sparse, b_final, cones, settings)
+
+    # Iniciar Solver cediendo los datos finales a float64 para Clarabel
+    solver = clarabel.DefaultSolver(
+        P_sparse.astype(np.float64), 
+        q.astype(np.float64), 
+        A_sparse.astype(np.float64), 
+        b_final.astype(np.float64), 
+        cones, 
+        settings
+    )
     res = solver.solve()
 
     if str(res.status) != "Solved":
         print(f"Clarabel advierte un estatus diferente a 'Solved': {res.status}")
-        # En Clarabel, a veces da "AlmostSolved" que sigue siendo muy bueno
         if str(res.status) not in ["Solved", "AlmostSolved"]:
             return None, None, None
 
-    # Extraer solución
+    # Extraer solución y devolver en float128
     sol = res.x
-    cx = sol[0 : n_vars_1d]
-    cy = sol[n_vars_1d : 2*n_vars_1d]
-    cz = sol[2*n_vars_1d : 3*n_vars_1d]
+    cx = np.array(sol[0 : n_vars_1d])
+    cy = np.array(sol[n_vars_1d : 2*n_vars_1d])
+    cz = np.array(sol[2*n_vars_1d : 3*n_vars_1d])
     
-    # Deshacer la normalización temporal para devolver el tiempo a real (T=10.0)
+    # Deshacer la normalización temporal para devolver el tiempo a real
     for seg in range(n_segments):
         for i in range(8):
             scale = T ** i
