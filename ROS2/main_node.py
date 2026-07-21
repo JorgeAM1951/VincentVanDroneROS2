@@ -16,15 +16,16 @@ class VincentVanDroneNode(Node):
         
         # --- 1. CONFIGURACIONES (Reemplazaría tu CONFIGS_MULTIRUN_ROS.m) ---
         self.pub_rate = 25.0  # Hz
-        self.takeoff_alt = 0.9 # m
-        self.start_pos = [2.0, -2.0, self.takeoff_alt]
+        self.takeoff_alt = 0.652    
+        self.start_pos = [-1.049, 2.89, self.takeoff_alt] # Vértice inferior izquierdo
         
         # --- 2. ESTADOS Y VARIABLES ---
         self.current_state = State()
         self.current_pose = PoseStamped()
         self.is_trajectory_loaded = False
         self.mission_state = "INIT" # Máquina de estados: INIT -> ARM -> TAKEOFF -> GOTO_START -> PUBLISH -> LAND
-        
+        self.warmup_counter = 0
+
         # --- 3. QOS PROFILES (ROS2 requiere configurar la calidad del servicio) ---
         qos_profile = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
@@ -71,10 +72,11 @@ class VincentVanDroneNode(Node):
     # --- CARGA DE DATOS ---
     def load_trajectory(self):
         self.get_logger().info("Cargando matriz de waypoints (Python txt load)...")
-        data = load_trajectory_from_txt('/ruta/a/tus/txts/')
+        data = load_trajectory_from_txt('../trayectorias_exportadas/20260720-135951_trajectory_ros2')
         if data is not None:
             self.traj_points = data['pos']
             self.traj_vels = data['vel']
+            self.traj_accs = data['acc']
             self.is_trajectory_loaded = True
             self.get_logger().info("Trayectoria cargada y lista para publicar.")
         else:
@@ -93,14 +95,29 @@ class VincentVanDroneNode(Node):
 
         # 1. ARMADO Y OFFBOARD
         if self.mission_state == "INIT":
-            if self.current_state.mode != "OFFBOARD":
-                self.set_offboard_mode()
-            elif not self.current_state.armed:
-                self.arm_drone()
+            self.warmup_counter += 1
+            
+            # Esperamos 50 ciclos (2 segundos) publicando setpoints VÁLIDOS
+            if self.warmup_counter > 50:
+                if self.current_state.mode != "OFFBOARD":
+                    # 1º Paso: Pedir modo OFFBOARD (ahora que las coordenadas tienen hora válida)
+                    if self.warmup_counter % 25 == 0:
+                        self.get_logger().info("Solicitando modo OFFBOARD...")
+                        self.set_offboard_mode()
+                        
+                elif not self.current_state.armed:
+                    # 2º Paso: Una vez aceptado el modo OFFBOARD, armar motores
+                    if self.warmup_counter % 25 == 0:
+                        self.get_logger().info("Solicitando ARM (Armar motores)...")
+                        self.arm_drone()
+                        
+                else:
+                    self.get_logger().info("Dron Armado y en Offboard. Volando a posición inicial...")
+                    self.mission_state = "GOTO_START"
             else:
-                self.get_logger().info("Dron Armado y en Offboard. Volando a posición inicial...")
-                self.mission_state = "GOTO_START"
-
+                if self.warmup_counter % 10 == 0:
+                    self.get_logger().info(f"Calentando conexión OFFBOARD: {self.warmup_counter}/50...")
+        
         # 2. IR A POSICIÓN DE INICIO Y HOVER
         elif self.mission_state == "GOTO_START":
             # Calcular distancia al objetivo
@@ -116,18 +133,28 @@ class VincentVanDroneNode(Node):
 
         # 3. PUBLICAR TRAYECTORIA (Equivalente al bucle for de tus scripts SIM_ROS)
         elif self.mission_state == "PUBLISH_TRAJECTORY":
-            # Aquí inyectas la lógica de tu SIM_ROS_Raw_Publisher.py o el que elijas
             if self.current_traj_idx < len(self.traj_points):
                 msg_raw = PositionTarget()
                 msg_raw.header.stamp = self.get_clock().now().to_msg()
                 msg_raw.coordinate_frame = PositionTarget.FRAME_LOCAL_NED
                 
-                # Tu TypeMask mágico de MATLAB (ej. 3520 para pos+vel)
-                msg_raw.type_mask = 3520 
+                # Máscara 3520 (Ignora aceleración/yaw, hace caso a Posición + Velocidad)
+                msg_raw.type_mask = 3072
                 
-                # Asignar valores (ejemplo dummy)
-                # msg_raw.position.x = self.traj_points[self.current_traj_idx][0]
-                # ...
+                # Asignar Posiciones (q.txt)
+                msg_raw.position.x = float(self.traj_points[self.current_traj_idx][0])
+                msg_raw.position.y = float(self.traj_points[self.current_traj_idx][1])
+                msg_raw.position.z = float(self.traj_points[self.current_traj_idx][2])
+                
+                # Asignar Velocidades (qd.txt)
+                msg_raw.velocity.x = float(self.traj_vels[self.current_traj_idx][0])
+                msg_raw.velocity.y = float(self.traj_vels[self.current_traj_idx][1])
+                msg_raw.velocity.z = float(self.traj_vels[self.current_traj_idx][2])
+
+                #Asignar Aceleración (qdd.txt)
+                msg_raw.acceleration_or_force.x = float(self.traj_accs[self.current_traj_idx][0])
+                msg_raw.acceleration_or_force.y = float(self.traj_accs[self.current_traj_idx][1])
+                msg_raw.acceleration_or_force.z = float(self.traj_accs[self.current_traj_idx][2])
                 
                 self.raw_pub.publish(msg_raw)
                 self.current_traj_idx += 1
@@ -146,6 +173,11 @@ class VincentVanDroneNode(Node):
     # --- FUNCIONES AUXILIARES ---
     def publish_hover_setpoint(self, pos):
         msg = PoseStamped()
+        
+        # ¡ESTAS DOS LÍNEAS SON VITALES PARA QUE PX4 ACEPTE EL DATO!
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.header.frame_id = "map"
+        
         msg.pose.position.x = float(pos[0])
         msg.pose.position.y = float(pos[1])
         msg.pose.position.z = float(pos[2])

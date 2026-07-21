@@ -12,28 +12,6 @@ from modules.export import export_trajectory_for_ros2
 
 
 def main():
-    #ts = time.millis()
-        #               #
-        # Load configs  #
-        #               #
-
-    
-        #  01) PREPROCESS INFO PRIOR TO TRAJECTORY GENERATION
-        # % aa) - LOAD WAYPOINTS 2D UV PIXEL COORDINATES FROM IMAGE AND PLOT
-        # % bb) - PLOT CAMERA in 3D WORLD
-        # % cc) - SEGMENT MANAGEMENT AND SPLITTER AND SAVE 2D/3D POINTS """
-
-        #         % 02) SOLVERS SECTION
-
-        # % 03) OTHER STUFF
-        #     % 01 - SAVING SOLVER RESULTS
-        #     % 02 - LEGENDS FOR FIGURES
-        #     % 03 - COMPARE LENGTHS
-        #     % 04 - SAVING FIGURES
-        #     % 05 - EXITING
-     # Lazy import to avoid circular dependency
-    
-
     # --- Build a simple demo camera ---
     cam = Camera(
         pose        = [0.0, 0.0, 1.5],
@@ -45,7 +23,7 @@ def main():
     )
 
     traj = Trajectory(np.array([[-1.049, 2.89, 0.652],[-2.0, 2.99, 1.698] ,[-1.049, 3.08, 2.744], [1.049, 3.08, 2.744], [2.0, 2.99, 1.698],  
-                                [1.049, 2.89, 0.652], [-1.049, 2.897, 0.652]]), period=10.0)
+                                [1.049, 2.89, 0.652], [-1.049, 2.89, 0.652]]), period=10.0)
 
     # AQUÍ TENGO QUE DIBUJAR LA TRAYECTORIA USANDO LOS WP
     # --- Build a square + diagonals as the desired drawing ---
@@ -79,7 +57,7 @@ def main():
         c_y = cy[8*seg : 8*seg+8]
         c_z = cz[8*seg : 8*seg+8]
 
-        t_puntos = np.linspace(0, T, 50)
+        t_puntos = np.linspace(0, T, int(T * 25.0))
         if seg < n_seg - 1:
             t_puntos = t_puntos[:-1]
         
@@ -157,17 +135,66 @@ def main():
 
     plt.show()
 
-    n_samples = q_mat.shape[0] # o q_mat.shape[1] si está transpuesta
-    t_vec_final = np.linspace(0, traj.period, n_samples)
-    
-    # Llamamos a la función
+    # =======================================================================
+    # EXPORTACIÓN DE LA TRAYECTORIA DE PYTHON PARA ROS2
+    # =======================================================================
+    q_py, qd_py, qdd_py, tvec_py = [], [], [], []
+    t_acumulado = 0.0
+
+    for seg in range(n_seg):
+        # 1. Extraer coeficientes de posición del segmento actual
+        c_x = cx[8*seg : 8*seg+8]
+        c_y = cy[8*seg : 8*seg+8]
+        c_z = cz[8*seg : 8*seg+8]
+        
+        # 2. Derivar coeficientes para la Velocidad
+        cv_x = [c_x[i] * i for i in range(1, 8)]
+        cv_y = [c_y[i] * i for i in range(1, 8)]
+        cv_z = [c_z[i] * i for i in range(1, 8)]
+        
+        # 3. Derivar coeficientes para la Aceleración
+        ca_x = [cv_x[i] * i for i in range(1, 7)]
+        ca_y = [cv_y[i] * i for i in range(1, 7)]
+        ca_z = [cv_z[i] * i for i in range(1, 7)]
+
+        # 4. Generar el tiempo de este segmento
+        t_puntos = np.linspace(0, T, 50)
+        if seg < n_seg - 1:
+            t_puntos = t_puntos[:-1]
+            
+        for t in t_puntos:
+            # Tiempo global
+            tvec_py.append(t_acumulado + t)
+            
+            # Evaluar Posición
+            px = sum(c_x[i] * (t**i) for i in range(8))
+            py = sum(c_y[i] * (t**i) for i in range(8))
+            pz = sum(c_z[i] * (t**i) for i in range(8))
+            q_py.append([px, py, pz])
+            
+            # Evaluar Velocidad
+            vx = sum(cv_x[i] * (t**i) for i in range(7))
+            vy = sum(cv_y[i] * (t**i) for i in range(7))
+            vz = sum(cv_z[i] * (t**i) for i in range(7))
+            qd_py.append([vx, vy, vz])
+            
+            # Evaluar Aceleración
+            ax = sum(ca_x[i] * (t**i) for i in range(6))
+            ay = sum(ca_y[i] * (t**i) for i in range(6))
+            az = sum(ca_z[i] * (t**i) for i in range(6))
+            qdd_py.append([ax, ay, az])
+            
+        t_acumulado += T
+
+    # 5. Exportar a ROS2 usando los datos coherentes
     carpeta_guardado = export_trajectory_for_ros2(
-        q = q_mat, 
-        qd = qd_mat, 
-        qdd = qdd_mat, 
-        tvec = t_vec_final, 
+        q = np.array(q_py), 
+        qd = np.array(qd_py), 
+        qdd = np.array(qdd_py), 
+        tvec = np.array(tvec_py), 
         base_path = "./trayectorias_exportadas"
     )
+    print(f"Trayectoria de Python exportada con éxito en: {carpeta_guardado}")
 
 
 if __name__ == "__main__":
