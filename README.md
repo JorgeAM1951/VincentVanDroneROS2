@@ -1,57 +1,54 @@
-Aquí tienes el archivo completo listo para que lo copies y lo guardes directamente como `README.md` en la raíz de tu repositorio:
 
 ```markdown
 # VincentVanDrone ROS 2
 
-Este repositorio contiene las herramientas de generación de trayectorias (Minimum Snap) y la ejecución del nodo de ROS 2 (Jazzy) mediante MAVROS para dibujar figuras geométricas complejas (como hexágonos proyectados) usando un dron.
+This repo contains the tools for trajectory generation (Minimum Snap) and the ROS 2 (Jazzy) node execution via MAVROS. This is a port of the original VincentVanDrone project. 
 
-Para garantizar que todas las librerías matemáticas (Clarabel, OSQP, Numpy, Scipy) y las dependencias de ROS 2 funcionen a la primera, el proyecto está completamente dockerizado.
-
----
-
-## Requisitos Previos
-
-Antes de empezar, asegúrate de tener instalado en tu sistema:
-*   **Git** (para clonar el repositorio).
-*   **Docker** (para construir y ejecutar el contenedor).
+To make sure all the math libraries (Clarabel, OSQP, Numpy, Scipy) and ROS 2 dependencies work smoothly, we provide a Docker container.
 
 ---
 
-## Guía de Instalación y Uso para Linux (Ubuntu/Debian)
+## Prerequisites
 
-Linux es el entorno nativo para este proyecto y la ejecución es muy directa.
+Before you start, make sure you have the following installed and updated:
+*   **Docker** (to build and run the container).
+---
 
-### Paso 1: Clonar el repositorio
-Abre una terminal y descarga el código en tu máquina:
+## Linux Guide (Ubuntu/Debian)
+
+Linux is the native OS for this project, so you should expect this to work.
+
+### Step 1: Clone the repo
+Open a terminal and download the code to your machine:
 ```bash
-git clone <URL_DE_TU_REPOSITORIO> vincent_van_drone
+git clone https://github.com/JorgeAM1951/VincentVanDroneROS2 vincent_van_drone
 cd vincent_van_drone
 
 ```
 
-### Paso 2: Dar permisos a la interfaz gráfica (X11)
+### Step 2: Allow GUI forwarding (X11)
 
-Para que los scripts de Python puedan abrir las ventanas 3D de Matplotlib en tu pantalla, ejecuta este comando en tu ordenador anfitrión:
+To let gazebo and Rviz2 create windows in your computer, run this command on your host machine:
 
 ```bash
 xhost +local:root
 
 ```
 
-### Paso 3: Construir la imagen Docker
+### Step 3: Build the Docker image
 
-Asegúrate de estar en el directorio donde se encuentra el `Dockerfile` y ejecuta:
+Make sure you're in the same directory as the `Dockerfile` and run:
 
 ```bash
 docker build -t vincent_van_drone:jazzy .
 
 ```
 
-*(Nota: Este paso puede tardar unos minutos la primera vez, ya que descarga ROS 2 Jazzy y compila las dependencias).*
+*(Note: This might take a few minutes the first time, as it has to download ROS 2 Jazzy and compile dependencies).*
 
-### Paso 4: Lanzar el contenedor
+### Step 4: Run the container
 
-Arranca el contenedor montando el código de tu ordenador directamente en el workspace de ROS 2 y conectando la pantalla:
+Spin up the container by mounting your local code directly into the ROS 2 workspace and connecting your display:
 
 ```bash
 docker run -it --rm \
@@ -65,39 +62,39 @@ docker run -it --rm \
 
 ---
 
-## Guía de Instalación y Uso para Windows 10/11
+## Windows 10/11 Guide
 
-Para usar aplicaciones con interfaz gráfica de Linux (GUI) y ROS 2 en Windows, utilizaremos **WSL2** (Windows Subsystem for Linux) y un servidor X11.
+To run Linux GUI apps and ROS 2 on Windows, we will be using **WSL2** along with an X11 server.
 
-### Paso 1: Preparar el entorno (Solo la primera vez)
+### Step 1: Environment setup (First time only)
 
-1. Instala [Docker Desktop para Windows](https://docs.docker.com/desktop/install/windows-install/) y asegúrate de que la integración con WSL2 esté activada en los ajustes (`Settings > General > Use the WSL 2 based engine`).
-2. Instala un servidor X11 como [VcXsrv (Xming)](https://sourceforge.net/projects/vcxsrv/).
-3. Ejecuta el acceso directo **XLaunch** que se ha creado al instalar VcXsrv.
-4. En la configuración inicial, deja todo por defecto dando a *Next*, pero en la ventana **Extra settings**, asegúrate de marcar la casilla **"Disable access control"**. Haz clic en *Finish*.
+1. Install [Docker Desktop for Windows](https://docs.docker.com/desktop/install/windows-install/) and make sure WSL2 integration is turned on in the settings (`Settings > General > Use the WSL 2 based engine`).
+2. Install an X11 server like [VcXsrv (Xming)](https://sourceforge.net/projects/vcxsrv/).
+3. Run the **XLaunch** shortcut that was created when you installed VcXsrv.
+4. Leave the default settings as they are and keep clicking *Next*. However, when you get to the **Extra settings** window, make sure to check **"Disable access control"**. Then click *Finish*.
 
-### Paso 2: Clonar el repositorio
+### Step 2: Clone the repo
 
-Abre una terminal de **PowerShell** o **WSL** y ejecuta:
+Open a **PowerShell** or **WSL** terminal and run:
 
 ```bash
-git clone <URL_DE_TU_REPOSITORIO> vincent_van_drone
+git clone <YOUR_REPO_URL> vincent_van_drone
 cd vincent_van_drone
 
 ```
 
-### Paso 3: Construir la imagen Docker
+### Step 3: Build the Docker image
 
-Dentro de la misma terminal, en la carpeta del proyecto, ejecuta:
+In that same terminal, inside the project folder, run:
 
 ```bash
 docker build -t vincent_van_drone:jazzy .
 
 ```
 
-### Paso 4: Lanzar el contenedor (con gráficos)
+### Step 4: Run the container
 
-En Windows, necesitamos decirle al contenedor que envíe la imagen gráfica a la IP del host de Windows a través de Docker. Ejecuta:
+On Windows, we need to tell the container to send the graphics to the Windows host IP through Docker. Run:
 
 ```powershell
 docker run -it --rm `
@@ -107,26 +104,26 @@ docker run -it --rm `
 
 ```
 
-*(Si usas Git Bash o WSL en lugar de PowerShell, cambia `${PWD}` por `$(pwd)`).*
+*(If you're using Git Bash or WSL instead of PowerShell, swap `${PWD}` for `$(pwd)`).*
 
 ---
 
-## Uso y Comprobación (Dentro del Docker)
+## Usage and Testing 
 
-Una vez hayas ejecutado el paso 4 en tu respectivo sistema operativo, tu terminal cambiará y serás el usuario `root` dentro de `/root/drones_unizar_ws`. Todo el entorno de ROS 2 se cargará automáticamente.
+Once you've run Step 4 on your respective OS, your terminal will change and you will be logged in as the `root` user inside `/root/drones_unizar_ws`. The entire ROS 2 environment will load automatically.
 
-### 1. Comprobación rápida (Smoke Test)
+### 1. Quick build test
 
-Verifica que las librerías matemáticas se han instalado correctamente:
+Check that the math libraries are installed properly:
 
 ```bash
-python3 -c "import numpy, scipy, matplotlib, osqp, clarabel; print('\n>>> Entorno Python OK <<<')"
+python3 -c "import numpy, scipy, matplotlib, osqp, clarabel; print('\n>>> Python Environment OK <<<')"
 
 ```
 
-### 2. Generar la trayectoria 3D
+### 2. Generate the 3D trajectory
 
-Navega a la carpeta de tu código base y ejecuta el script principal:
+Navigate to the codebase folder and run the main script:
 
 ```bash
 cd src
@@ -134,23 +131,19 @@ python3 main.py
 
 ```
 
-**¿Qué debería ocurrir?**
+**What should happen?**
 
-1. El solver calculará los coeficientes matemáticos y los imprimirá en la terminal.
-2. Se abrirán ventanas gráficas mostrando la trayectoria del dron (Hexágono) y las gráficas de velocidad, aceleración, jerk y snap.
-3. Se generará una carpeta `trayectorias_exportadas/` (que también aparecerá en tu ordenador host) con los archivos de texto listos para ser leídos por MAVROS.
+1. The solver will calculate the math coefficients and print them in the terminal.
+2. Graphic windows will pop up showing the drone's path along with velocity, acceleration, jerk, and snap plots.
+3. A `trayectorias_exportadas/` folder (which will also show up on your host machine) will be generated, containing the text files ready for MAVROS to read.
 
-### 3. Lanzar el nodo de ROS 2
+### 3. Launch the ROS 2 node
 
-*(Asegúrate de tener un simulador SITL como PX4 corriendo y accesible).*
-Ejecuta tu nodo para enviar la trayectoria generada al dron:
+*(Make sure you have a SITL simulator like PX4 running and accessible).*
+Run your node to send the generated trajectory to the drone:
 
 ```bash
 cd src/ROS2
 python3 main_node.py
-
-```
-
-```
 
 ```
